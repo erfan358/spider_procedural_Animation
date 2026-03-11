@@ -1,4 +1,5 @@
 using DG.Tweening;
+using System;
 using System.Collections;
 using UnityEngine;
 
@@ -21,6 +22,7 @@ public class SpiderProceduralAnimation : MonoBehaviour
         [HideInInspector] public float lastSurfaceChangeTime = 0;
     }
 
+    [SerializeField] private SimpleMove movementScript;
     [SerializeField] private Transform bodyTransform;
     [SerializeField] private LegIKData[] legIKDataArray;
     [SerializeField] private LayerMask walkableLayers;
@@ -32,7 +34,7 @@ public class SpiderProceduralAnimation : MonoBehaviour
     [SerializeField] private float feetHeight = .4f;
     [SerializeField] private float bodyRotationSpeed = 5;
     [SerializeField] private float heightFromGround = 2;
-    private float surfaceChangeCooldown = .2f;
+    private float surfaceChangeCooldown = .1f;
     private float lastTimeSinceSurfaceChange = 0;
 
     private Vector3 velocity;
@@ -51,7 +53,12 @@ public class SpiderProceduralAnimation : MonoBehaviour
     private void Update()
     {
         velocity = CalculateVelocity();
-        Vector3 supportNormal = CalculateSupportNormal();
+
+        if (movementScript.IsOffMeshLink()) 
+        {
+            StartCoroutine(JumpAnimation());
+            return;
+        }
 
         for (int i = 0; i < legIKDataArray.Length; i++)
         {
@@ -78,13 +85,7 @@ public class SpiderProceduralAnimation : MonoBehaviour
                 if ((Vector3.Distance(legIKDataArray[i].newPos, hitData.point) > stepDistance && 
                     (legIKDataArray[i].lastSurfaceChangeTime + surfaceChangeCooldown < Time.time) || legIKDataArray[i].needsUpdate) 
                     && legIKDataArray[i].isGrounded && isOpositeLegsGrounded)
-                {
-                    if (legIKDataArray[i].needsUpdate == true)
-                    {
-                        legIKDataArray[i].lastSurfaceChangeTime = Time.time;
-                        legIKDataArray[i].needsUpdate = false;
-                    }
-                    legIKDataArray[i].lerp = 0;
+                {                   
 
                     Vector3 dir = hitData.point - legIKDataArray[i].newPos;
                     if (velocity.sqrMagnitude > .1)
@@ -93,8 +94,16 @@ public class SpiderProceduralAnimation : MonoBehaviour
                     dir = Vector3.ProjectOnPlane(dir, hitData.normal);
                     dir.Normalize();
 
-                    legIKDataArray[i].newPos = hitData.point + (hitData.normal * feetHeight) + (dir * (stepDistance * .9f));                  
+                    int additionalStep = legIKDataArray[i].needsUpdate ? 0 : 1; // If it's a surface change, we want to step directly to the new position without the extra distance
+                    legIKDataArray[i].newPos = hitData.point + (hitData.normal * feetHeight) + (dir * (stepDistance * .9f) * additionalStep);                  
                     legIKDataArray[i].isGrounded = false;
+
+                    if (legIKDataArray[i].needsUpdate == true)
+                    {
+                        legIKDataArray[i].lastSurfaceChangeTime = Time.time;
+                        legIKDataArray[i].needsUpdate = false;
+                    }
+                    legIKDataArray[i].lerp = 0;
                 }
             }
             if (legIKDataArray[i].lerp < 1)
@@ -112,8 +121,14 @@ public class SpiderProceduralAnimation : MonoBehaviour
             }
         }
 
+        Vector3 supportNormal = CalculateSupportNormal();
         RotateBasedOnLegPlacement(supportNormal);
         AdjustBodyHeight(supportNormal);
+    }
+
+    private IEnumerator JumpAnimation()
+    {
+        yield return null;
     }
 
     private Vector3 CalculateVelocity()
@@ -157,7 +172,7 @@ public class SpiderProceduralAnimation : MonoBehaviour
             }
         }
 
-        if (legData.lastFrameGroundNormal != closestGroundNormal)
+        if (legData.lastFrameGroundNormal != closestGroundNormal && (legData.lastSurfaceChangeTime + surfaceChangeCooldown < Time.time))
         {
             legData.needsUpdate = true;
             legData.lastFrameGroundNormal = closestGroundNormal;
@@ -202,6 +217,7 @@ public class SpiderProceduralAnimation : MonoBehaviour
 
         // Convert to local space relative to spider root
         Vector3 localTarget = transform.InverseTransformPoint(targetBodyPos);
+        localTarget.y = Mathf.Clamp(localTarget.y, feetHeight + 0.1f, 2); // Ensure body doesn't go below a certain height
 
         Vector3 localPos = bodyTransform.localPosition;
 
